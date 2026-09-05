@@ -9,17 +9,17 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: 'Face Scanner',
-  description: 'Mobile-first minimalist facial analysis application with True Black aesthetic.',
+  title: 'VEYRA — Biometric Intelligence',
+  description: 'Precision biometric facial analysis and reverse visual intelligence engine.',
   openGraph: {
-    title: 'Face Scanner',
-    description: 'Mobile-first minimalist facial analysis application with True Black aesthetic.',
+    title: 'VEYRA — Biometric Intelligence',
+    description: 'Precision biometric facial analysis and reverse visual intelligence engine.',
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Face Scanner',
-    description: 'Mobile-first minimalist facial analysis application with True Black aesthetic.',
+    title: 'VEYRA — Biometric Intelligence',
+    description: 'Precision biometric facial analysis and reverse visual intelligence engine.',
   },
 };
 

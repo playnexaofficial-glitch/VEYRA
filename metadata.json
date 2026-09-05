@@ -1,6 +1,6 @@
 {
-  "name": "Face Scanner",
-  "description": "Mobile-first minimalist facial analysis application with True Black aesthetic.",
+  "name": "VEYRA",
+  "description": "Precision biometric facial analysis and reverse visual intelligence engine.",
   "requestFramePermissions": ["camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

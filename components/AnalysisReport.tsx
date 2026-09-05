@@ -14,7 +14,7 @@ export function AnalysisReport({ result, imagePreview, onReset }: AnalysisReport
   const [copied, setCopied] = useState(false);
 
   const handleCopySummary = () => {
-    const text = `AURA BIOMETRIC PROFILE\nOverall Score: ${result.overallScore}/100\nVector: ${result.facialDescription}\n\nSymmetry: ${result.symmetry?.score}% - ${result.symmetry?.label}\nRadiance: ${result.skinRadiance?.score}% - ${result.skinRadiance?.label}\nProportions: ${result.proportions?.score}% - ${result.proportions?.label}\nVitality: ${result.vitality?.score}% - ${result.vitality?.label}\nSocial Links: ${result.socialLinks?.length ? result.socialLinks.map(l => `${l.platform}: ${l.handle}`).join(', ') : 'None'}`;
+    const text = `VEYRA BIOMETRIC PROFILE\nOverall Score: ${result.overallScore}/100\nVector: ${result.facialDescription}\n\nSymmetry: ${result.symmetry?.score}% - ${result.symmetry?.label}\nRadiance: ${result.skinRadiance?.score}% - ${result.skinRadiance?.label}\nProportions: ${result.proportions?.score}% - ${result.proportions?.label}\nVitality: ${result.vitality?.score}% - ${result.vitality?.label}\nSocial Links: ${result.socialLinks?.length ? result.socialLinks.map(l => `${l.platform}: ${l.handle}`).join(', ') : 'None'}`;
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);

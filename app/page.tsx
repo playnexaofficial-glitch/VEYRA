@@ -98,7 +98,7 @@ export default function Home() {
 
       {/* Minimal Footer Signature with Abundant Negative Space */}
       <footer className="w-full py-6 flex items-center justify-between text-[10px] tracking-widest text-neutral-500 uppercase font-mono select-none px-2 max-w-sm">
-        <span>OPTICAL ENGINE 3.8</span>
+        <span>VEYRA OPTICAL 3.8</span>
         <span>TRUE BLACK</span>
       </footer>
     </main>

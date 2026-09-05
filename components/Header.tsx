@@ -15,11 +15,11 @@ export function Header({ onReset, showReset }: HeaderProps) {
         onClick={onReset}
         className="flex flex-col cursor-pointer group"
       >
-        <span className="text-xs tracking-[0.3em] font-medium text-white uppercase transition-opacity duration-300 group-hover:opacity-80">
-          AURA
+        <span className="text-xs tracking-[0.35em] font-medium text-white uppercase transition-opacity duration-300 group-hover:opacity-80">
+          VEYRA
         </span>
         <span className="text-[9px] tracking-[0.25em] text-neutral-400 uppercase font-light">
-          BIOMETRICS
+          INTELLIGENCE
         </span>
       </div>
 

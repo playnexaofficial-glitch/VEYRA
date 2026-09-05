@@ -87,7 +87,7 @@ Return ONLY a valid JSON object matching this exact TypeScript structure:
 }`;
 
         const response = await ai.models.generateContent({
-          model: "gemini-3.8-flash",
+          model: "gemini-1.5-flash",
           contents: {
             parts: [
               {

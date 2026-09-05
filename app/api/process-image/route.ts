@@ -181,7 +181,7 @@ Return ONLY a valid JSON object matching this structure:
 
     try {
       const geminiResponse = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
+        model: "gemini-1.5-flash",
         contents: {
           parts: [
             {

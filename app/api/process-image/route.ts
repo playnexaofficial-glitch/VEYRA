@@ -3,6 +3,9 @@ import { GoogleGenAI } from "@google/genai";
 import { getSupabaseClient, SearchHistoryRecord } from "@/lib/supabase";
 import { performGoogleLensReverseSearch, SocialProfile } from "@/lib/serpapi";
 
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
 export interface SocialLink {
   platform: string;
   handle: string;
@@ -177,41 +180,64 @@ Return ONLY a valid JSON object matching this structure:
       vitality: { score: number; label: string; note: string };
       keyObservations: string[];
       recommendations: string[];
-    };
+    } = null as any;
 
-    try {
-      const geminiResponse = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
-        contents: {
-          parts: [
-            {
-              inlineData: {
-                mimeType: mimeType,
-                data: cleanBase64,
+    const candidateModels = [
+      "gemini-2.5-flash",
+      "gemini-3.8-flash",
+      "gemini-flash-latest",
+    ];
+
+    let lastGeminiError: string = "";
+    let generationSuccess = false;
+
+    for (const modelName of candidateModels) {
+      try {
+        const geminiResponse = await ai.models.generateContent({
+          model: modelName,
+          contents: {
+            parts: [
+              {
+                inlineData: {
+                  mimeType: mimeType,
+                  data: cleanBase64,
+                },
               },
-            },
-            {
-              text: prompt,
-            },
-          ],
-        },
-        config: {
-          responseMimeType: "application/json",
-        },
-      });
+              {
+                text: prompt,
+              },
+            ],
+          },
+          config: {
+            responseMimeType: "application/json",
+          },
+        });
 
-      const responseText = geminiResponse.text;
-      if (!responseText) {
-        throw new Error("Empty response received from Gemini model.");
+        const responseText = geminiResponse.text;
+        if (!responseText) {
+          throw new Error(`Empty response received from ${modelName}.`);
+        }
+
+        parsedGemini = JSON.parse(responseText);
+        generationSuccess = true;
+        break;
+      } catch (geminiError: unknown) {
+        const gErr = geminiError as { message?: string; status?: number; code?: string | number };
+        const errMsg = gErr?.message || String(geminiError);
+        lastGeminiError = errMsg;
+        console.warn(`Model ${modelName} attempt error:`, errMsg);
+
+        // If it's auth/permission error, don't retry other models with same key
+        if (errMsg.includes("403") || errMsg.includes("PERMISSION_DENIED") || errMsg.includes("API key not valid") || errMsg.includes("401") || errMsg.includes("UNAUTHENTICATED")) {
+          break;
+        }
       }
+    }
 
-      parsedGemini = JSON.parse(responseText);
-    } catch (geminiError: unknown) {
-      const gErr = geminiError as { message?: string; status?: number; code?: string | number };
-      const errMsg = gErr?.message || String(geminiError);
-      console.error("Gemini API Error in /api/process-image:", errMsg);
+    if (!generationSuccess) {
+      console.error("Gemini API Error in /api/process-image:", lastGeminiError);
 
-      if (errMsg.includes("403") || errMsg.includes("PERMISSION_DENIED") || errMsg.includes("permission")) {
+      if (lastGeminiError.includes("403") || lastGeminiError.includes("PERMISSION_DENIED") || lastGeminiError.includes("permission")) {
         return NextResponse.json(
           {
             success: false,
@@ -222,7 +248,7 @@ Return ONLY a valid JSON object matching this structure:
         );
       }
 
-      if (errMsg.includes("API key not valid") || errMsg.includes("401") || errMsg.includes("UNAUTHENTICATED")) {
+      if (lastGeminiError.includes("API key not valid") || lastGeminiError.includes("401") || lastGeminiError.includes("UNAUTHENTICATED")) {
         return NextResponse.json(
           {
             success: false,
@@ -233,7 +259,7 @@ Return ONLY a valid JSON object matching this structure:
         );
       }
 
-      if (errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED")) {
+      if (lastGeminiError.includes("429") || lastGeminiError.includes("RESOURCE_EXHAUSTED")) {
         return NextResponse.json(
           {
             success: false,
@@ -248,7 +274,7 @@ Return ONLY a valid JSON object matching this structure:
         {
           success: false,
           errorType: "GEMINI_GENERATION_FAILED",
-          error: `Optical analysis model error: ${errMsg.slice(0, 150)}`,
+          error: `Optical analysis model error: ${lastGeminiError.slice(0, 150)}`,
         },
         { status: 502 }
       );

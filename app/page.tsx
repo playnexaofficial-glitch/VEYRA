@@ -30,7 +30,13 @@ export default function Home() {
         }),
       });
 
-      const data = await response.json();
+      const rawText = await response.text();
+      let data: ProcessImageResponse & { error?: string; errorType?: string };
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        throw new Error(`Server returned unexpected response (${response.status} ${response.statusText || 'Error'}).`);
+      }
 
       if (!response.ok || !data.success) {
         throw new Error(data.error || 'Optical processing failed.');

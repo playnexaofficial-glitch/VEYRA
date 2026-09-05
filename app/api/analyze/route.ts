@@ -86,27 +86,34 @@ Return ONLY a valid JSON object matching this exact TypeScript structure:
   ]
 }`;
 
-        const response = await ai.models.generateContent({
-          model: "gemini-1.5-flash",
-          contents: {
-            parts: [
-              {
-                inlineData: {
-                  mimeType: mimeType,
-                  data: cleanBase64,
-                },
+        let text: string | null | undefined = null;
+        for (const candidateModel of ["gemini-2.5-flash", "gemini-3.8-flash", "gemini-flash-latest"]) {
+          try {
+            const response = await ai.models.generateContent({
+              model: candidateModel,
+              contents: {
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType: mimeType,
+                      data: cleanBase64,
+                    },
+                  },
+                  {
+                    text: prompt,
+                  },
+                ],
               },
-              {
-                text: prompt,
+              config: {
+                responseMimeType: "application/json",
               },
-            ],
-          },
-          config: {
-            responseMimeType: "application/json",
-          },
-        });
-
-        const text = response.text;
+            });
+            text = response.text;
+            if (text) break;
+          } catch (mErr) {
+            console.warn(`Analyze model ${candidateModel} failed:`, mErr);
+          }
+        }
         if (text) {
           const parsed: AnalysisResult = JSON.parse(text);
           parsed.timestamp = new Date().toISOString();

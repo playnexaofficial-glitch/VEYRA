@@ -1,5 +1,6 @@
 import type {Metadata} from 'next';
 import { Inter } from 'next/font/google';
+import { Analytics } from '@vercel/analytics/next';
 import './globals.css';
 
 const inter = Inter({
@@ -28,6 +29,7 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
     <html lang="en" className={`dark bg-black ${inter.variable}`}>
       <body className="bg-black text-white antialiased font-sans selection:bg-neutral-800 selection:text-white min-h-dvh overflow-x-hidden" suppressHydrationWarning>
         {children}
+        <Analytics />
       </body>
     </html>
   );

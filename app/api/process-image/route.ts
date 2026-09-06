@@ -73,6 +73,23 @@ function calculateDescriptionSimilarity(desc1: string, desc2: string): number {
   return union > 0 ? Number((intersection / union).toFixed(3)) : 0;
 }
 
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function isOverloadedOrRateLimited(errMsg: string): boolean {
+  const lower = errMsg.toLowerCase();
+  return (
+    lower.includes("503") ||
+    lower.includes("429") ||
+    lower.includes("high demand") ||
+    lower.includes("service unavailable") ||
+    lower.includes("unavailable") ||
+    lower.includes("resource_exhausted") ||
+    lower.includes("rate limit") ||
+    lower.includes("overloaded") ||
+    lower.includes("capacity")
+  );
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => null);
@@ -188,54 +205,92 @@ Return ONLY a valid JSON object matching this structure:
       "gemini-flash-latest",
     ];
 
+    const MAX_RETRIES = 3;
     let lastGeminiError: string = "";
     let generationSuccess = false;
 
-    for (const modelName of candidateModels) {
-      try {
-        const geminiResponse = await ai.models.generateContent({
-          model: modelName,
-          contents: {
-            parts: [
-              {
-                inlineData: {
-                  mimeType: mimeType,
-                  data: cleanBase64,
+    modelLoop: for (const modelName of candidateModels) {
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          const geminiResponse = await ai.models.generateContent({
+            model: modelName,
+            contents: {
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: mimeType,
+                    data: cleanBase64,
+                  },
                 },
-              },
-              {
-                text: prompt,
-              },
-            ],
-          },
-          config: {
-            responseMimeType: "application/json",
-          },
-        });
+                {
+                  text: prompt,
+                },
+              ],
+            },
+            config: {
+              responseMimeType: "application/json",
+            },
+          });
 
-        const responseText = geminiResponse.text;
-        if (!responseText) {
-          throw new Error(`Empty response received from ${modelName}.`);
-        }
+          const responseText = geminiResponse.text;
+          if (!responseText) {
+            throw new Error(`Empty response received from ${modelName}.`);
+          }
 
-        parsedGemini = JSON.parse(responseText);
-        generationSuccess = true;
-        break;
-      } catch (geminiError: unknown) {
-        const gErr = geminiError as { message?: string; status?: number; code?: string | number };
-        const errMsg = gErr?.message || String(geminiError);
-        lastGeminiError = errMsg;
-        console.warn(`Model ${modelName} attempt error:`, errMsg);
+          parsedGemini = JSON.parse(responseText);
+          generationSuccess = true;
+          break modelLoop;
+        } catch (geminiError: unknown) {
+          const gErr = geminiError as { message?: string; status?: number; code?: string | number };
+          const errMsg = gErr?.message || String(geminiError);
+          lastGeminiError = errMsg;
 
-        // If it's auth/permission error, don't retry other models with same key
-        if (errMsg.includes("403") || errMsg.includes("PERMISSION_DENIED") || errMsg.includes("API key not valid") || errMsg.includes("401") || errMsg.includes("UNAUTHENTICATED")) {
-          break;
+          // If auth or permission error, do not retry with the same key
+          if (
+            errMsg.includes("403") ||
+            errMsg.includes("PERMISSION_DENIED") ||
+            errMsg.includes("API key not valid") ||
+            errMsg.includes("401") ||
+            errMsg.includes("UNAUTHENTICATED")
+          ) {
+            console.error(`Fatal authentication/permission error on ${modelName}:`, errMsg);
+            break modelLoop;
+          }
+
+          // If 503 (high demand / service unavailable) or 429 (rate limited / resource exhausted), retry with exponential backoff
+          if (isOverloadedOrRateLimited(errMsg) && attempt < MAX_RETRIES) {
+            // Exponential backoff: 1s, 2s, 4s + slight random jitter
+            const backoffMs = Math.pow(2, attempt) * 1000 + Math.floor(Math.random() * 300);
+            console.warn(
+              `[Gemini High Demand/Overloaded] Attempt ${attempt + 1}/${MAX_RETRIES + 1} for ${modelName} received temporary capacity limit: "${errMsg}". Retrying in ${backoffMs}ms with exponential backoff...`
+            );
+            await delay(backoffMs);
+            continue;
+          }
+
+          console.warn(`Model ${modelName} attempt ${attempt + 1} error:`, errMsg);
+          break; // Switch to next candidate model if non-transient or exhausted retries
         }
       }
     }
 
     if (!generationSuccess) {
-      console.error("Gemini API Error in /api/process-image:", lastGeminiError);
+      console.error("Gemini API Error in /api/process-image after retries:", lastGeminiError);
+
+      if (
+        isOverloadedOrRateLimited(lastGeminiError) ||
+        lastGeminiError.includes("503") ||
+        lastGeminiError.includes("429")
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            errorType: "GEMINI_OVERLOADED",
+            error: "AI servers are currently at peak capacity. Please try again in a moment.",
+          },
+          { status: 503 }
+        );
+      }
 
       if (lastGeminiError.includes("403") || lastGeminiError.includes("PERMISSION_DENIED") || lastGeminiError.includes("permission")) {
         return NextResponse.json(
@@ -259,22 +314,11 @@ Return ONLY a valid JSON object matching this structure:
         );
       }
 
-      if (lastGeminiError.includes("429") || lastGeminiError.includes("RESOURCE_EXHAUSTED")) {
-        return NextResponse.json(
-          {
-            success: false,
-            errorType: "GEMINI_RATE_LIMITED",
-            error: "Gemini API rate limit reached. Please wait a moment and retry.",
-          },
-          { status: 429 }
-        );
-      }
-
       return NextResponse.json(
         {
           success: false,
           errorType: "GEMINI_GENERATION_FAILED",
-          error: `Optical analysis model error: ${lastGeminiError.slice(0, 150)}`,
+          error: "AI servers are currently at peak capacity. Please try again in a moment.",
         },
         { status: 502 }
       );

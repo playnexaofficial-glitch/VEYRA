@@ -35,11 +35,36 @@ export default function Home() {
       try {
         data = JSON.parse(rawText);
       } catch {
-        throw new Error(`Server returned unexpected response (${response.status} ${response.statusText || 'Error'}).`);
+        throw new Error('AI servers are currently at peak capacity. Please try again in a moment.');
       }
 
       if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Optical processing failed.');
+        if (
+          response.status === 503 ||
+          response.status === 429 ||
+          data.errorType === 'GEMINI_OVERLOADED' ||
+          data.errorType === 'GEMINI_RATE_LIMITED' ||
+          data.error?.toLowerCase().includes('503') ||
+          data.error?.toLowerCase().includes('high demand') ||
+          data.error?.toLowerCase().includes('capacity') ||
+          data.error?.toLowerCase().includes('overloaded') ||
+          data.error?.toLowerCase().includes('unavailable') ||
+          data.error?.toLowerCase().includes('rate limit')
+        ) {
+          throw new Error('AI servers are currently at peak capacity. Please try again in a moment.');
+        }
+
+        // Clean any raw json or technical syntax if present
+        let cleanErr = data.error || 'Biometric analysis could not be completed. Please try again in a moment.';
+        if (
+          cleanErr.startsWith('{') ||
+          cleanErr.includes('"error"') ||
+          cleanErr.includes('<!doctype') ||
+          cleanErr.includes('Unexpected token')
+        ) {
+          cleanErr = 'AI servers are currently at peak capacity. Please try again in a moment.';
+        }
+        throw new Error(cleanErr);
       }
 
       setResult(data);
@@ -47,7 +72,24 @@ export default function Home() {
     } catch (err: unknown) {
       console.error('Scan processing error:', err);
       const error = err as { message?: string };
-      setErrorMsg(error?.message || 'Biometric stream interrupted. Please retry.');
+      let displayMsg = error?.message || 'AI servers are currently at peak capacity. Please try again in a moment.';
+      const lower = displayMsg.toLowerCase();
+      if (
+        lower.includes('503') ||
+        lower.includes('429') ||
+        lower.includes('high demand') ||
+        lower.includes('resource_exhausted') ||
+        lower.includes('unavailable') ||
+        lower.includes('capacity') ||
+        lower.includes('overloaded') ||
+        lower.includes('unexpected token') ||
+        displayMsg.startsWith('{') ||
+        displayMsg.includes('"error"') ||
+        displayMsg.includes('<!doctype')
+      ) {
+        displayMsg = 'AI servers are currently at peak capacity. Please try again in a moment.';
+      }
+      setErrorMsg(displayMsg);
       setStatus('error');
     }
   };

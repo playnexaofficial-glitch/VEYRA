@@ -544,35 +544,35 @@ Return ONLY a valid JSON object matching this structure:
         socialLinks = verifiedProfiles;
         source = "google_lens_reverse_search";
       }
+    }
 
-      // Step 4: Save the highly accurate final list and the device_id into the Supabase 'search_history' table
-      if (supabase && supabaseStatus === "connected") {
-        try {
-          const insertPayload = {
-            device_id: deviceId,
-            face_description: parsedGemini.facialDescription,
-            social_links: socialLinks,
-            created_at: new Date().toISOString(),
-          };
+    // Step 4: Automatically save the successful scan and device_id into the Supabase 'search_history' table
+    if (supabase && supabaseStatus === "connected") {
+      try {
+        const insertPayload = {
+          device_id: deviceId,
+          face_description: parsedGemini.facialDescription,
+          social_links: socialLinks,
+          created_at: new Date().toISOString(),
+        };
 
-          const { error: insertErr } = await supabase
-            .from("search_history")
-            .insert(insertPayload);
+        const { error: insertErr } = await supabase
+          .from("search_history")
+          .insert(insertPayload);
 
-          if (insertErr) {
-            console.warn("Supabase insert with device_id failed:", insertErr.message);
-            // Fallback in case table schema lacks device_id column
-            if (insertErr.message?.includes("device_id") || insertErr.code === "PGRST204" || insertErr.code === "42703") {
-              await supabase.from("search_history").insert({
-                face_description: parsedGemini.facialDescription,
-                social_links: socialLinks,
-                created_at: new Date().toISOString(),
-              });
-            }
+        if (insertErr) {
+          console.warn("Supabase insert with device_id failed:", insertErr.message);
+          // Fallback in case table schema lacks device_id column
+          if (insertErr.message?.includes("device_id") || insertErr.code === "PGRST204" || insertErr.code === "42703") {
+            await supabase.from("search_history").insert({
+              face_description: parsedGemini.facialDescription,
+              social_links: socialLinks,
+              created_at: new Date().toISOString(),
+            });
           }
-        } catch (insertErr) {
-          console.warn("Could not insert to search_history table:", insertErr);
         }
+      } catch (insertErr) {
+        console.warn("Could not insert to search_history table:", insertErr);
       }
     }
 

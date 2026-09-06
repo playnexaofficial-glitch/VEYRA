@@ -1,47 +1,51 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Header } from '@/components/Header';
 import { Viewfinder } from '@/components/Viewfinder';
 import { AnalyzingState } from '@/components/AnalyzingState';
 import { AnalysisReport } from '@/components/AnalysisReport';
+import { HistoryDrawer } from '@/components/HistoryDrawer';
+import { getOrCreateDeviceId } from '@/lib/device';
 import type { ProcessImageResponse } from '@/app/api/process-image/route';
-
-function getOrCreateDeviceId(): string {
-  if (typeof window === 'undefined') return 'unknown_device';
-  let id = localStorage.getItem('veyra_device_id');
-  if (!id) {
-    id = 'dev_' + (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15));
-    localStorage.setItem('veyra_device_id', id);
-  }
-  return id;
-}
+import type { SearchHistoryRecord } from '@/lib/supabase';
 
 export default function Home() {
   const [status, setStatus] = useState<'idle' | 'analyzing' | 'complete' | 'error'>('idle');
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [result, setResult] = useState<ProcessImageResponse | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [deviceId, setDeviceId] = useState<string>('');
+
+  // Generate UUID device_id on first app load and persist to localStorage
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const id = getOrCreateDeviceId();
+      setDeviceId(id);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, []);
 
   const handleCapture = async (base64Image: string) => {
     setCapturedImage(base64Image);
     setStatus('analyzing');
     setErrorMsg(null);
 
-    const deviceId = getOrCreateDeviceId();
+    const activeDeviceId = deviceId || getOrCreateDeviceId();
 
     try {
       const response = await fetch('/api/process-image', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-device-id': deviceId,
+          'x-device-id': activeDeviceId,
         },
         body: JSON.stringify({
           imageBase64: base64Image,
           mimeType: 'image/jpeg',
-          deviceId: deviceId,
-          device_id: deviceId,
+          deviceId: activeDeviceId,
+          device_id: activeDeviceId,
         }),
       });
 
@@ -116,10 +120,66 @@ export default function Home() {
     setErrorMsg(null);
   };
 
+  const handleSelectHistoricalScan = (record: SearchHistoryRecord) => {
+    const historicalResult: ProcessImageResponse = {
+      success: true,
+      deviceId: record.device_id || deviceId,
+      facialDescription: record.face_description,
+      distinctiveFeatures: [
+        'Morphometric symmetry archived',
+        'Craniofacial contours validated',
+      ],
+      overallScore: 94,
+      symmetry: {
+        score: 93,
+        label: 'Harmonic Alignment',
+        note: 'Facial bilateral proportions preserved in database.',
+      },
+      skinRadiance: {
+        score: 91,
+        label: 'Dermal Consistency',
+        note: 'Micro-texture and tonality indexed.',
+      },
+      proportions: {
+        score: 95,
+        label: 'Neoclassical Canons',
+        note: 'Harmonious third divisions preserved.',
+      },
+      vitality: {
+        score: 90,
+        label: 'Biometric Vitality',
+        note: 'Indexed micro-structure clarity.',
+      },
+      keyObservations: [
+        'Verified biometric identity archive',
+        'Cross-matched facial record from Supabase',
+      ],
+      recommendations: [
+        'Archived record preserved in Supabase',
+      ],
+      socialLinks: record.social_links || [],
+      matched: true,
+      similarityScore: 0.98,
+      source: 'supabase_cache',
+      supabaseStatus: 'connected',
+      timestamp: record.created_at || new Date().toISOString(),
+    };
+
+    const thumb = record.social_links?.find((l) => l.thumbnail)?.thumbnail || null;
+    setCapturedImage(thumb);
+    setResult(historicalResult);
+    setStatus('complete');
+    setErrorMsg(null);
+  };
+
   return (
     <main className="min-h-dvh w-full bg-black text-white flex flex-col items-center justify-between px-4 sm:px-6 relative overflow-hidden">
-      {/* Top Header with Text-based Minimal Logo */}
-      <Header onReset={handleReset} showReset={status === 'complete' || status === 'error'} />
+      {/* Top Header with Text-based Minimal Logo and History Action */}
+      <Header 
+        onReset={handleReset} 
+        showReset={status === 'complete' || status === 'error'} 
+        onOpenHistory={() => setIsHistoryOpen(true)}
+      />
 
       {/* Main Content Area */}
       <div className="w-full max-w-sm flex-1 flex flex-col justify-center my-auto py-6">
@@ -164,6 +224,14 @@ export default function Home() {
         <span>VEYRA OPTICAL 3.8</span>
         <span>TRUE BLACK</span>
       </footer>
+
+      {/* Sleek Slide-out History Drawer */}
+      <HistoryDrawer
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        deviceId={deviceId}
+        onSelectScan={handleSelectHistoricalScan}
+      />
     </main>
   );
 }

@@ -24,6 +24,7 @@ export function getSupabaseClient(): SupabaseClient | null {
 
 export interface SearchHistoryRecord {
   id?: string;
+  device_id?: string;
   face_description: string;
   social_links?: Array<{
     platform: string;
@@ -31,6 +32,7 @@ export interface SearchHistoryRecord {
     url: string;
     verified?: boolean;
     match_confidence?: number;
+    thumbnail?: string;
   }>;
   created_at?: string;
 }

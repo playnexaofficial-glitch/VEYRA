@@ -1,9 +1,10 @@
 export interface SocialProfile {
-  platform: 'Instagram' | 'Facebook' | 'TikTok' | 'Twitter' | string;
+  platform: 'Instagram' | 'Facebook' | 'TikTok' | 'Twitter' | 'LinkedIn' | string;
   handle: string;
   url: string;
   verified: boolean;
   match_confidence?: number;
+  thumbnail?: string;
 }
 
 /**
@@ -39,7 +40,9 @@ async function uploadImageToSerpApi(base64Data: string, apiKey: string): Promise
 }
 
 /**
- * Parses raw links from Google Lens results to extract real social media profiles
+ * Parses raw links from Google Lens results to extract real social media profiles.
+ * STRICTLY filters URLs: only allows exact domains (instagram.com, facebook.com, tiktok.com, twitter.com, linkedin.com).
+ * Drops any other garbage links (e.g. pinterest, news sites, blogs).
  */
 function extractSocialProfilesFromLensResults(results: any): SocialProfile[] {
   const profiles: SocialProfile[] = [];
@@ -53,74 +56,116 @@ function extractSocialProfilesFromLensResults(results: any): SocialProfile[] {
 
   for (const item of matches) {
     const link = item.link || item.source_url || '';
-    if (!link || seenUrls.has(link.toLowerCase())) continue;
+    if (!link) continue;
 
-    const lowerLink = link.toLowerCase();
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(link);
+    } catch {
+      continue;
+    }
 
-    // Instagram
-    if (lowerLink.includes('instagram.com/')) {
-      const match = link.match(/instagram\.com\/([a-zA-Z0-9._]+)/i);
-      const handle = match && match[1] && !['p', 'reel', 'explore', 'stories'].includes(match[1].toLowerCase())
-        ? `@${match[1]}`
-        : '@instagram_user';
-      
-      seenUrls.add(lowerLink);
+    const hostname = parsedUrl.hostname.toLowerCase();
+    const pathname = parsedUrl.pathname;
+    const cleanUrl = `${parsedUrl.origin}${parsedUrl.pathname}`;
+    const normalizedKey = cleanUrl.toLowerCase().replace(/\/$/, '');
+
+    if (seenUrls.has(normalizedKey)) continue;
+
+    // Collect visual thumbnail if available for Double AI Verification
+    const thumbnail = item.thumbnail || item.original || '';
+
+    // 1. Instagram: instagram.com or *.instagram.com
+    if (hostname === 'instagram.com' || hostname.endsWith('.instagram.com')) {
+      const match = pathname.match(/^\/([a-zA-Z0-9._]+)/i);
+      const candidate = match ? match[1].toLowerCase() : '';
+      const ignored = ['p', 'reel', 'reels', 'explore', 'stories', 'direct', 'accounts', 'about', 'legal', 'developer'];
+      const handle = candidate && !ignored.includes(candidate) ? `@${match![1]}` : '@instagram_user';
+
+      seenUrls.add(normalizedKey);
       profiles.push({
         platform: 'Instagram',
         handle,
         url: link,
         verified: true,
         match_confidence: 0.96,
+        thumbnail,
       });
     }
-    // Twitter / X
-    else if (lowerLink.includes('twitter.com/') || lowerLink.includes('x.com/')) {
-      const match = link.match(/(?:twitter|x)\.com\/([a-zA-Z0-9_]+)/i);
-      const handle = match && match[1] && !['home', 'explore', 'search', 'intent', 'i'].includes(match[1].toLowerCase())
-        ? `@${match[1]}`
-        : '@x_user';
+    // 2. Facebook: facebook.com or *.facebook.com
+    else if (hostname === 'facebook.com' || hostname.endsWith('.facebook.com')) {
+      const match = pathname.match(/^\/([a-zA-Z0-9.]+)/i);
+      const candidate = match ? match[1].toLowerCase() : '';
+      const ignored = ['pages', 'groups', 'events', 'watch', 'marketplace', 'gaming', 'login', 'share', 'help', 'policies', 'ads'];
+      const handle = candidate && !ignored.includes(candidate) ? match![1] : 'Facebook Profile';
 
-      seenUrls.add(lowerLink);
-      profiles.push({
-        platform: 'Twitter',
-        handle,
-        url: link,
-        verified: true,
-        match_confidence: 0.94,
-      });
-    }
-    // TikTok
-    else if (lowerLink.includes('tiktok.com/')) {
-      const match = link.match(/tiktok\.com\/@?([a-zA-Z0-9._]+)/i);
-      const handle = match && match[1] && !['explore', 'live', 'video'].includes(match[1].toLowerCase())
-        ? `@${match[1].replace(/^@/, '')}`
-        : '@tiktok_creator';
-
-      seenUrls.add(lowerLink);
-      profiles.push({
-        platform: 'TikTok',
-        handle,
-        url: link,
-        verified: true,
-        match_confidence: 0.92,
-      });
-    }
-    // Facebook
-    else if (lowerLink.includes('facebook.com/')) {
-      const match = link.match(/facebook\.com\/([a-zA-Z0-9.]+)/i);
-      const handle = match && match[1] && !['pages', 'groups', 'events', 'watch'].includes(match[1].toLowerCase())
-        ? match[1]
-        : 'Facebook Profile';
-
-      seenUrls.add(lowerLink);
+      seenUrls.add(normalizedKey);
       profiles.push({
         platform: 'Facebook',
         handle,
         url: link,
         verified: true,
         match_confidence: 0.90,
+        thumbnail,
       });
     }
+    // 3. TikTok: tiktok.com or *.tiktok.com
+    else if (hostname === 'tiktok.com' || hostname.endsWith('.tiktok.com')) {
+      const match = pathname.match(/^\/@?([a-zA-Z0-9._]+)/i);
+      const candidate = match ? match[1].toLowerCase() : '';
+      const ignored = ['explore', 'live', 'video', 'tag', 'music', 'foryou', 'about', 'legal'];
+      const handle = candidate && !ignored.includes(candidate)
+        ? `@${match![1].replace(/^@/, '')}`
+        : '@tiktok_creator';
+
+      seenUrls.add(normalizedKey);
+      profiles.push({
+        platform: 'TikTok',
+        handle,
+        url: link,
+        verified: true,
+        match_confidence: 0.92,
+        thumbnail,
+      });
+    }
+    // 4. Twitter / X: twitter.com or *.twitter.com or x.com or *.x.com
+    else if (
+      hostname === 'twitter.com' ||
+      hostname.endsWith('.twitter.com') ||
+      hostname === 'x.com' ||
+      hostname.endsWith('.x.com')
+    ) {
+      const match = pathname.match(/^\/([a-zA-Z0-9_]+)/i);
+      const candidate = match ? match[1].toLowerCase() : '';
+      const ignored = ['home', 'explore', 'search', 'intent', 'i', 'messages', 'notifications', 'settings', 'tos', 'privacy'];
+      const handle = candidate && !ignored.includes(candidate) ? `@${match![1]}` : '@x_user';
+
+      seenUrls.add(normalizedKey);
+      profiles.push({
+        platform: 'Twitter',
+        handle,
+        url: link,
+        verified: true,
+        match_confidence: 0.94,
+        thumbnail,
+      });
+    }
+    // 5. LinkedIn: linkedin.com or *.linkedin.com
+    else if (hostname === 'linkedin.com' || hostname.endsWith('.linkedin.com')) {
+      const match = pathname.match(/^\/in\/([a-zA-Z0-9_-]+)/i);
+      const handle = match && match[1] ? match[1] : 'LinkedIn Profile';
+
+      seenUrls.add(normalizedKey);
+      profiles.push({
+        platform: 'LinkedIn',
+        handle,
+        url: link,
+        verified: true,
+        match_confidence: 0.95,
+        thumbnail,
+      });
+    }
+    // STRICT FILTER: All other domains (e.g. pinterest, news sites, blogs, youtube, etc.) are DROPPED
   }
 
   return profiles;

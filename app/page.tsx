@@ -7,6 +7,16 @@ import { AnalyzingState } from '@/components/AnalyzingState';
 import { AnalysisReport } from '@/components/AnalysisReport';
 import type { ProcessImageResponse } from '@/app/api/process-image/route';
 
+function getOrCreateDeviceId(): string {
+  if (typeof window === 'undefined') return 'unknown_device';
+  let id = localStorage.getItem('veyra_device_id');
+  if (!id) {
+    id = 'dev_' + (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15));
+    localStorage.setItem('veyra_device_id', id);
+  }
+  return id;
+}
+
 export default function Home() {
   const [status, setStatus] = useState<'idle' | 'analyzing' | 'complete' | 'error'>('idle');
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
@@ -18,15 +28,20 @@ export default function Home() {
     setStatus('analyzing');
     setErrorMsg(null);
 
+    const deviceId = getOrCreateDeviceId();
+
     try {
       const response = await fetch('/api/process-image', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'x-device-id': deviceId,
         },
         body: JSON.stringify({
           imageBase64: base64Image,
           mimeType: 'image/jpeg',
+          deviceId: deviceId,
+          device_id: deviceId,
         }),
       });
 

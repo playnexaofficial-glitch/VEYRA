@@ -12,10 +12,12 @@ export interface SocialLink {
   url: string;
   verified?: boolean;
   match_confidence?: number;
+  thumbnail?: string;
 }
 
 export interface ProcessImageResponse {
   success: boolean;
+  deviceId?: string;
   facialDescription: string;
   distinctiveFeatures: string[];
   overallScore: number;
@@ -90,6 +92,113 @@ function isOverloadedOrRateLimited(errMsg: string): boolean {
   );
 }
 
+/**
+ * Double AI Verification step:
+ * Sends the candidate thumbnail from SerpApi along with the original uploaded image back to Gemini.
+ * Prompt: 'Are these two faces the exact same person? Reply strictly with YES or NO'
+ * Discards any candidate where Gemini answers NO.
+ */
+async function verifyFacePair(
+  ai: GoogleGenAI,
+  originalBase64: string,
+  originalMimeType: string,
+  thumbnailUrl: string
+): Promise<boolean> {
+  if (!thumbnailUrl || !thumbnailUrl.startsWith("http")) {
+    return false;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 7000);
+    const thumbResponse = await fetch(thumbnailUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      },
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeoutId));
+
+    if (!thumbResponse.ok) {
+      console.warn(`[Double AI Verification] Failed to download thumbnail (${thumbResponse.status}) from ${thumbnailUrl}`);
+      return false;
+    }
+
+    const contentType = thumbResponse.headers.get("content-type") || "image/jpeg";
+    const thumbMimeType = contentType.split(";")[0].trim() || "image/jpeg";
+    const arrayBuffer = await thumbResponse.arrayBuffer();
+    const thumbBase64 = Buffer.from(arrayBuffer).toString("base64");
+
+    if (thumbBase64.length < 50) {
+      return false;
+    }
+
+    // Models: prompt asks for Gemini 1.5 Flash; include 2.5-flash and latest fallbacks if 1.5 is unavailable or 404 in v1beta
+    const verificationModels = [
+      "gemini-1.5-flash",
+      "gemini-2.5-flash",
+      "gemini-3.8-flash",
+      "gemini-flash-latest",
+    ];
+
+    const promptText = "Are these two faces the exact same person? Reply strictly with YES or NO";
+
+    for (const modelName of verificationModels) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const resp = await ai.models.generateContent({
+            model: modelName,
+            contents: {
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: originalMimeType,
+                    data: originalBase64,
+                  },
+                },
+                {
+                  inlineData: {
+                    mimeType: thumbMimeType,
+                    data: thumbBase64,
+                  },
+                },
+                {
+                  text: promptText,
+                },
+              ],
+            },
+          });
+
+          const rawAns = resp.text?.trim().toUpperCase() || "";
+          console.log(`[Double AI Verification] Model ${modelName} verdict: "${rawAns}" for thumbnail: ${thumbnailUrl}`);
+
+          // Strictly filter: only allow if YES
+          if (rawAns.startsWith("YES") || (rawAns.includes("YES") && !rawAns.includes("NO"))) {
+            return true;
+          }
+          // Discard if NO
+          return false;
+        } catch (err: unknown) {
+          const errMsg = String(err);
+          if (isOverloadedOrRateLimited(errMsg) && attempt < 1) {
+            await delay(1000);
+            continue;
+          }
+          if (errMsg.includes("404") || errMsg.includes("NOT_FOUND") || errMsg.includes("not found")) {
+            break; // Try next candidate model
+          }
+          console.warn(`[Double AI Verification] ${modelName} attempt error:`, errMsg);
+          break;
+        }
+      }
+    }
+
+    return false;
+  } catch (err) {
+    console.warn("[Double AI Verification] Exception checking face pair:", err);
+    return false;
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => null);
@@ -103,6 +212,15 @@ export async function POST(req: NextRequest) {
     const imageBase64Raw = body.imageBase64 || body.image;
     const imageUrl = body.imageUrl || body.url;
     const mimeType = body.mimeType || "image/jpeg";
+
+    // 1. Extract unique device_id from request body or headers
+    const rawDeviceId =
+      (typeof body.deviceId === "string" && body.deviceId.trim()) ||
+      (typeof body.device_id === "string" && body.device_id.trim()) ||
+      req.headers.get("x-device-id")?.trim() ||
+      req.headers.get("x-client-id")?.trim() ||
+      `dev_${Buffer.from(req.headers.get("user-agent") || "anonymous").toString("hex").slice(0, 16)}`;
+    const deviceId = rawDeviceId.slice(0, 128);
 
     if (!imageBase64Raw || typeof imageBase64Raw !== "string") {
       return NextResponse.json(
@@ -385,22 +503,73 @@ Return ONLY a valid JSON object matching this structure:
       }
     }
 
-    // 4. If NOT found in Supabase cache, perform real Google Lens Reverse Search via SerpApi
+    // 4. Perform real Google Lens Reverse Search via SerpApi if not matched in cache
     if (!matched) {
       const lensResult = await performGoogleLensReverseSearch(cleanBase64, imageUrl);
+
       if (lensResult.profiles && lensResult.profiles.length > 0) {
-        socialLinks = lensResult.profiles;
+        // Step 3: Double AI Verification step
+        // Send the thumbnails of the fetched SerpApi results along with the original uploaded image back to Gemini.
+        // Prompt Gemini with: 'Are these two faces the exact same person? Reply strictly with YES or NO'.
+        // Filter out and discard any results where Gemini answers NO.
+        const verifiedProfiles: SocialLink[] = [];
+
+        for (const candidate of lensResult.profiles) {
+          if (!candidate.thumbnail) {
+            // Discard results without a thumbnail as visual verification cannot be performed
+            continue;
+          }
+
+          const isSamePerson = await verifyFacePair(
+            ai,
+            cleanBase64,
+            mimeType,
+            candidate.thumbnail
+          );
+
+          if (isSamePerson) {
+            verifiedProfiles.push({
+              platform: candidate.platform,
+              handle: candidate.handle,
+              url: candidate.url,
+              verified: true,
+              match_confidence: 0.98,
+              thumbnail: candidate.thumbnail,
+            });
+          } else {
+            console.log(`[Double AI Verification] Discarded non-matching result (Gemini answered NO): ${candidate.url}`);
+          }
+        }
+
+        socialLinks = verifiedProfiles;
         source = "google_lens_reverse_search";
       }
 
-      // 5. Automatically and silently save to Supabase 'search_history' for future caching
+      // Step 4: Save the highly accurate final list and the device_id into the Supabase 'search_history' table
       if (supabase && supabaseStatus === "connected") {
         try {
-          await supabase.from("search_history").insert({
+          const insertPayload = {
+            device_id: deviceId,
             face_description: parsedGemini.facialDescription,
             social_links: socialLinks,
             created_at: new Date().toISOString(),
-          });
+          };
+
+          const { error: insertErr } = await supabase
+            .from("search_history")
+            .insert(insertPayload);
+
+          if (insertErr) {
+            console.warn("Supabase insert with device_id failed:", insertErr.message);
+            // Fallback in case table schema lacks device_id column
+            if (insertErr.message?.includes("device_id") || insertErr.code === "PGRST204" || insertErr.code === "42703") {
+              await supabase.from("search_history").insert({
+                face_description: parsedGemini.facialDescription,
+                social_links: socialLinks,
+                created_at: new Date().toISOString(),
+              });
+            }
+          }
         } catch (insertErr) {
           console.warn("Could not insert to search_history table:", insertErr);
         }
@@ -409,6 +578,7 @@ Return ONLY a valid JSON object matching this structure:
 
     const finalResponse: ProcessImageResponse = {
       success: true,
+      deviceId,
       facialDescription: parsedGemini.facialDescription,
       distinctiveFeatures: parsedGemini.distinctiveFeatures || [],
       overallScore: parsedGemini.overallScore || 94,
